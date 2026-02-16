@@ -1,0 +1,144 @@
+LEGEND:
+  [PF] = promptfeed.py
+  [CR] = checkresponse.py
+
+
+┌────────────────────────────────────────────────────────────────────┐
+│                               START                                │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            v
+┌────────────────────────────────────────────────────────────────────┐
+│ [PF] read_arguments()                                              │
+│  - sets globals: temp, max_context_tokens, refusal_mode, verbose    │
+│  - sets citations_arg / number_citations                            │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            v
+┌────────────────────────────────────────────────────────────────────┐
+│ [PF] select_prompt_file()                                          │
+│  - chooses prompt*.txt unless CLI filename passed                   │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            v
+┌────────────────────────────────────────────────────────────────────┐
+│ [PF] parse_prompts_from_file()                                     │
+│  - fills: prompts[], system_prompt, summary, story_file             │
+│  - ensures system_prompt includes: "All responses begin with Ok!"   │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            v
+┌────────────────────────────────────────────────────────────────────┐
+│ [PF] If story_file (&&file&&) exists:                              │
+│  - read_story_file()                                               │
+│  - count_tokens(story)                                             │
+│  - decide embeddings vs full story:                                │
+│      * auto (based on 1/4 context) OR forced by -citations          │
+│  - if embeddings: chunk_text_tokens() + build_faiss_index()         │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            v
+┌────────────────────────────────────────────────────────────────────┐
+│ [PF] minimal_system_text = system_prepend + system_prompt           │
+│  - used ONLY for prompt #1 grounding retry                          │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            v
+┌────────────────────────────────────────────────────────────────────┐
+│ [PF] Prepare output filename (LM Studio model name if available)    │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            v
+┌────────────────────────────────────────────────────────────────────┐
+│                     LOOP: for i in range(len(prompts))             │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            v
+┌────────────────────────────────────────────────────────────────────┐
+│ [PF] build_message_history(i, return_prompts, ...)                  │
+│  Builds:                                                           │
+│   - system: prepend + base_system_prompt + (optional) summary       │
+│             + (optional) story context (embeddings/full)            │
+│             + (optional) prior scenes                               │
+│   - user: "FINAL PROMPT: ..."                                       │
+│          if i==0: requires [[PROMPT_ID:0001]] after Ok!             │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            v
+┌────────────────────────────────────────────────────────────────────┐
+│ [PF] send_prompt_to_llm(message_history) → raw_response             │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            v
+┌────────────────────────────────────────────────────────────────────┐
+│ [CR] analyze/decision step (pure analysis, no LLM calls)            │
+│  - strip_thinking(raw) + Ok! anchor                                 │
+│  - refusal_check(raw vs cleaned)                                    │
+│  - if i==0: grounding tag present?                                  │
+│  Returns something like:                                            │
+│   {cleaned_preview, refusal_hit?, needs_grounding_retry? ...}       │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            ├────────────────────────────────────────────────────────┐
+            │                                                        │
+            v                                                        v
+┌────────────────────────────────────────────────────────────────────┐
+│ [PF] Prompt #1 grounding retry? (ONE TIME)                          │
+│  if i==0 and CR says "missing PROMPT_ID":                           │
+│   - build minimal_history using minimal_system_text + same user_text │
+│   - [PF] call send_prompt_to_llm() → new raw_response                │
+│   - [CR] re-analyze new raw_response                                 │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            v
+┌────────────────────────────────────────────────────────────────────┐
+│ [PF] Refusal retry loop? (if refusal_mode and refusal_hit)          │
+│  Up to 3 forced continuation attempts:                              │
+│   Attempt 1: temp = original                                        │
+│   Attempt 2: temp = max(0.7, original*0.8)                           │
+│   Attempt 3: temp = 0.5 + "narrator override (Step 1/2)" user msg   │
+│                                                                          │
+│  For each attempt:                                                     │
+│   - [CR] log_refusal(...) to refusals.log when refusal detected        │
+│   - [PF] build_message_history(...) + assistant "Ok! Let's do that!"   │
+│   - [PF] send_prompt_to_llm(...) → raw_forced                          │
+│   - [CR] analyze raw_forced (is it still refusal?)                     │
+│   - break if accepted                                                  │
+│  After loop: restore original temperature                              │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            v
+┌────────────────────────────────────────────────────────────────────┐
+│ [CR] cleanup_response(raw_response)                                 │
+│  - strip_thinking + Ok! anchor                                       │
+│  - if Step 1/2 present: keep Step 2 only                             │
+│  - if prompt 0: log cleaned head and removed <think> to logs.txt      │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            v
+┌────────────────────────────────────────────────────────────────────┐
+│ [PF] Meta retry? (ONE TIME, if CR says looks_like_meta_nonanswer)    │
+│  - [PF] add user msg: "Write ONLY prose, begin Ok!"                  │
+│  - [PF] send_prompt_to_llm(...) → raw_retry                          │
+│  - [CR] cleanup_response(raw_retry)                                  │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            v
+┌────────────────────────────────────────────────────────────────────┐
+│ [PF] ai_slop_check(cleaned)                                         │
+│  - uses PF heuristics; writes to logs.txt                             │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            v
+┌────────────────────────────────────────────────────────────────────┐
+│ [PF] Persist + optional embedding update                              │
+│  - return_prompts.append(cleaned)                                    │
+│  - if embeddings mode and scene is huge:                              │
+│      embed scene + add to FAISS + maybe bump citations                │
+│  - append to output file results_*.txt                                │
+└────────────────────────────────────────────────────────────────────┘
+            │
+            v
+┌────────────────────────────────────────────────────────────────────┐
+│                                END                                 │
+└────────────────────────────────────────────────────────────────────┘
