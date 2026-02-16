@@ -9,5 +9,11 @@ venv/
 # Environment variables (API keys, etc.)
 .env
 
+#prompts
+Prompts/
+
+#nologs
+src/logs.txt
+
 # System files
 .DS_Store
