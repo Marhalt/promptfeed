@@ -178,11 +178,24 @@ def first_prompt_is_grounded_raw(raw_text: str, prompt_id: str) -> bool:
     return re.search(pattern, head) is not None
 
 
-def looks_like_refusal(response: str, verbose: bool = False) -> bool:
+def looks_like_refusal(response: str, verbose: bool = False):
+    """
+    Returns:
+        (is_refusal: bool,
+         reason: str | None,
+         matched_text: str | None,
+         context_snippet: str | None)
+    """
+
     if not response:
-        return False
+        return False, None, None, None
 
     lowered = response.lower().lstrip()
+
+    def extract_context(original_text, match_start, match_end, window=80):
+        start = max(0, match_start - window)
+        end = min(len(original_text), match_end + window)
+        return original_text[start:end]
 
     refusal_start_phrases = (
         "i cannot",
@@ -203,15 +216,16 @@ def looks_like_refusal(response: str, verbose: bool = False) -> bool:
         "sorry",
     )
 
+    # START PHRASES
     for p in refusal_start_phrases:
         if lowered.startswith(p):
-            if verbose:
-                print(f"[DEBUG] refusal(start) matched: {p!r}")
-            return True
+            match_end = len(p)
+            context = extract_context(response, 0, match_end)
+            return True, "start_phrase", p, context
 
+    # EARLY SIGNALS
     head = lowered[:2000]
-
-    refusal_early_signals = (
+    for s in (
         "unable to",
         "decline this request",
         "harmful content",
@@ -219,28 +233,22 @@ def looks_like_refusal(response: str, verbose: bool = False) -> bool:
         "need to decline",
         "i am unable to",
         "i'm unable to",
-        "i'm not able",
         "cannot fulfill",
-        "content I cannot",
         "can't fulfill",
-        "i must refuse",
-        "i must decline",
-        "must refuse",
-        "must decline",
         "cannot comply",
         "can't comply",
         "cannot help with",
         "can't help with",
         "i cannot write this",
         "i can't write this",
-    )
-    for s in refusal_early_signals:
-        if s in head:
-            if verbose:
-                print(f"[DEBUG] refusal(early) matched: {s!r}")
-            return True
+    ):
+        idx = head.find(s)
+        if idx != -1:
+            context = extract_context(response, idx, idx + len(s))
+            return True, "early_signal", s, context
 
-    refusal_anywhere_phrases = (
+    # ANYWHERE PHRASES
+    for p in (
         "safety policies",
         "safety policy",
         "ethical guidelines",
@@ -250,28 +258,22 @@ def looks_like_refusal(response: str, verbose: bool = False) -> bool:
         "violates policy",
         "policy violation",
         "content policy",
-        "i must refuse",
-        "i must decline",
-        "i cannot fulfill the request",
-        "i can't fulfill the request",
-    )
-    for p in refusal_anywhere_phrases:
-        if p in lowered:
-            if verbose:
-                print(f"[DEBUG] refusal(anywhere) matched: {p!r}")
-            return True
+    ):
+        idx = lowered.find(p)
+        if idx != -1:
+            context = extract_context(response, idx, idx + len(p))
+            return True, "anywhere_phrase", p, context
 
-    if ("safety & policy check" in lowered) or ("safety and policy check" in lowered):
-        if verbose:
-            print("[DEBUG] refusal(structured) matched: safety & policy check")
-        return True
+    # REGEX STRUCTURED
+    regex = r"\b(i\s+can(?:not|'t)|unable)\b.*\b(refuse|decline|comply|fulfill|help|generate|write)\b"
+    m = re.search(regex, head)
+    if m:
+        context = extract_context(response, m.start(), m.end())
+        return True, "regex_structured", m.group(), context
 
-    if re.search(r"\b(i\s+can(?:not|'t)|unable)\b.*\b(refuse|decline|comply|fulfill|help|generate|write)\b", head):
-        if verbose:
-            print("[DEBUG] refusal(regex) matched in head")
-        return True
+    return False, None, None, None
 
-    return False
+
 
 
 # This function is designed to detect non-answers by the model.
@@ -635,7 +637,7 @@ def read_arguments():
             print(f"[WARNING] File '{args.filename}' does not exist. Ignoring this argument.")
 
     # Print summary
-    print("\n=== Settings Summary ===")
+    print("\n\n=== Settings Summary ===")
     print(f"Initial citations per prompt: {number_citations}")
     print(f"-citations arg value: {citations_arg}")
     print(f"Temperature: {temperature}")
@@ -1017,29 +1019,25 @@ def first_prompt_is_grounded(text: str, prompt_id: str) -> bool:
     return re.search(pattern, head) is not None
 
 
-# This function checks the llm's response
-# If it looks like a refusal, it will try again
-# Also checks for AI slop
 def check_response(prompt_idx, build_message_func, previous_responses, summary, response_check):
     """
     Patched flow (robust for reasoning models):
       1) Build full context and call LLM once (RAW)
       2) If prompt #1: check grounding on RAW response; retry once with MINIMAL context if tag missing
-      3) Refusal handling is driven by RAW and CLEANED checks (RAW first)
-      4) Forced continuation attempts:
-           - attempts 1-2: assistant "Ok! Let's do that!" trick
-           - attempt 3: Option 6 + Option 3 (persona + 2-step outline->scene)
-      5) Strip thinking tokens ONLY after we have the final RAW response to keep
-      6) Optional: if attempt 3 produced Step 1 + Step 2, keep Step 2 only
-      7) Meta-nonanswer check + retry (prose-only)
-      8) AI slop check
-      9) Return cleaned response
+      3) Refusal handling driven by RAW + CLEANED checks, logging match context to refusals.log
+      4) Forced continuation attempts (up to 3)
+      5) Strip thinking tokens from final chosen RAW response
+      6) Meta/non-answer retry (prose-only)
+      7) AI slop check
+      8) Return cleaned response
     """
 
     global temperature, verbose, refusal_mode, system_prompt, FIRST_PROMPT_ID, total_refusals, system_prepend
     original_temperature = temperature
 
-    # --- helpers local to this function ---
+    # -----------------------------
+    # Local helpers
+    # -----------------------------
     def build_attempt3_override_user_message() -> str:
         return (
             "Narrator mode override:\n"
@@ -1069,11 +1067,54 @@ def check_response(prompt_idx, build_message_func, previous_responses, summary, 
             log_file.write(removed_thinking + "\n")
             log_file.write("===========================================\n\n")
 
+    def log_refusal(
+        prompt_idx: int,
+        attempt_label: str,        # "initial", "forced_attempt_1", ...
+        source_label: str,         # "RAW" or "CLEANED"
+        reason: str,               # "start_phrase", "early_signal", ...
+        matched: str,              # matched phrase / regex group
+        context_snippet: str,      # excerpt around match (original casing)
+        raw_text: str,
+        cleaned_text: str = "",
+    ):
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Helpful stats for later tuning (e.g., "too short" heuristic)
+        raw_chars = len(raw_text or "")
+        cleaned_chars = len(cleaned_text or "")
+        try:
+            raw_toks = count_tokens(raw_text or "")
+        except Exception:
+            raw_toks = -1
+        try:
+            cleaned_toks = count_tokens(cleaned_text or "")
+        except Exception:
+            cleaned_toks = -1
+
+        snippet = (context_snippet or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+        if len(snippet) > 500:
+            snippet = snippet[:500] + " …"
+
+        with open("refusals.log", "a", encoding="utf-8") as f:
+            f.write("\n" + "=" * 70 + "\n")
+            f.write(f"[{ts}] prompt_idx={prompt_idx} (response={prompt_idx + 1})\n")
+            f.write(f"attempt={attempt_label}  source={source_label}\n")
+            f.write(f"reason={reason}\n")
+            if matched:
+                f.write(f"matched={repr(matched)}\n")
+            f.write(f"raw: chars={raw_chars} toks={raw_toks}\n")
+            if cleaned_text:
+                f.write(f"cleaned: chars={cleaned_chars} toks={cleaned_toks}\n")
+            if snippet:
+                f.write("\n--- match_context (±window) ---\n")
+                f.write(snippet + "\n")
+            f.write("=" * 70 + "\n")
+
     # ------------------------------------------------------------
     # 1) Build normal context and call LLM (RAW)
     # ------------------------------------------------------------
     message_history, context_text = build_message_func(prompt_idx, previous_responses)
-    user_text = message_history[-1]["content"]  # reuse for minimal retry if needed
+    user_text = message_history[-1]["content"]  # used for minimal retry if needed
 
     raw_response = send_prompt_to_llm(message_history)
 
@@ -1082,7 +1123,6 @@ def check_response(prompt_idx, build_message_func, previous_responses, summary, 
     # ------------------------------------------------------------
     if prompt_idx == 0:
         raw_grounded = first_prompt_is_grounded_raw(raw_response, FIRST_PROMPT_ID)
-
         if not raw_grounded:
             print("    [WARN] Prompt #1 RAW response missing PROMPT_ID — retrying once with MINIMAL context...")
 
@@ -1102,22 +1142,42 @@ def check_response(prompt_idx, build_message_func, previous_responses, summary, 
                 print("    [INFO] Prompt #1 retry grounded successfully.")
 
     # ------------------------------------------------------------
-    # 3) Refusal handling (RAW first)
+    # 3) Refusal handling (RAW + CLEANED) + log before retries
     # ------------------------------------------------------------
-    raw_refusal = looks_like_refusal(raw_response)
+    cleaned_preview, _ = strip_thinking(raw_response, verbose=False)
 
-    cleaned_preview, preview_thinking = strip_thinking(raw_response, verbose=False)
+    raw_is, raw_reason, raw_match, raw_ctx = looks_like_refusal(raw_response)
+    cln_is, cln_reason, cln_match, cln_ctx = looks_like_refusal(cleaned_preview)
 
-    if refusal_mode and (raw_refusal or looks_like_refusal(cleaned_preview)):
-        print("    [WARNING] Response seems like refusal. Initiating forced continuation attempts...")
+    if refusal_mode and (raw_is or cln_is):
+        if raw_is:
+            src = "RAW"
+            reason = raw_reason or "unknown"
+            match = raw_match or ""
+            ctx = raw_ctx or ""
+        else:
+            src = "CLEANED"
+            reason = cln_reason or "unknown"
+            match = cln_match or ""
+            ctx = cln_ctx or ""
 
-        # Count the initial refusal observed
+        print(f"    [WARNING] Refusal detected ({src} / {reason}{(': ' + repr(match)) if match else ''}). Logged.")
+        log_refusal(
+            prompt_idx=prompt_idx,
+            attempt_label="initial",
+            source_label=src,
+            reason=reason,
+            matched=match,
+            context_snippet=ctx,
+            raw_text=raw_response,
+            cleaned_text=cleaned_preview,
+        )
+
         total_refusals += 1
+        final_raw = raw_response
 
-        final_raw = raw_response  # will update on success
-
+        # Forced continuation attempts
         for cont_attempt in range(3):
-            # Adjust temperature per attempt
             if cont_attempt == 1:
                 temperature = max(0.7, original_temperature * 0.8)
             elif cont_attempt == 2:
@@ -1127,22 +1187,43 @@ def check_response(prompt_idx, build_message_func, previous_responses, summary, 
 
             print(f"    [INFO] Forcing continuation attempt {cont_attempt + 1} with temp={temperature:.2f}")
 
-            # Rebuild context fresh
-            message_history, context_text = build_message_func(prompt_idx, previous_responses)
-
-            # Inject override assistant message (your original trick)
+            message_history, _ = build_message_func(prompt_idx, previous_responses)
             message_history.append({"role": "assistant", "content": "Ok! Let's do that!"})
 
-            # Attempt 3: Option 6 + Option 3 (persona + outline->scene)
             if cont_attempt == 2:
                 message_history.append({"role": "user", "content": build_attempt3_override_user_message()})
 
             raw_forced = send_prompt_to_llm(message_history)
-            forced_cleaned, forced_thinking = strip_thinking(raw_forced, verbose=False)
+            forced_cleaned, _ = strip_thinking(raw_forced, verbose=False)
 
-            # Determine if this attempt is still a refusal (use both raw and cleaned)
-            if looks_like_refusal(raw_forced) or looks_like_refusal(forced_cleaned):
-                total_refusals += 1  # count each refusal we hit in forced attempts
+            fr_is, fr_reason, fr_match, fr_ctx = looks_like_refusal(raw_forced)
+            fc_is, fc_reason, fc_match, fc_ctx = looks_like_refusal(forced_cleaned)
+
+            if fr_is or fc_is:
+                if fr_is:
+                    src2 = "RAW"
+                    reason2 = fr_reason or "unknown"
+                    match2 = fr_match or ""
+                    ctx2 = fr_ctx or ""
+                else:
+                    src2 = "CLEANED"
+                    reason2 = fc_reason or "unknown"
+                    match2 = fc_match or ""
+                    ctx2 = fc_ctx or ""
+
+                print(f"    [WARNING] Still refusing on attempt {cont_attempt + 1} ({src2} / {reason2}{(': ' + repr(match2)) if match2 else ''}). Logged.")
+                log_refusal(
+                    prompt_idx=prompt_idx,
+                    attempt_label=f"forced_attempt_{cont_attempt + 1}",
+                    source_label=src2,
+                    reason=reason2,
+                    matched=match2,
+                    context_snippet=ctx2,
+                    raw_text=raw_forced,
+                    cleaned_text=forced_cleaned,
+                )
+
+                total_refusals += 1
                 final_raw = raw_forced
                 continue
 
@@ -1163,7 +1244,7 @@ def check_response(prompt_idx, build_message_func, previous_responses, summary, 
     cleaned_response, removed_thinking = strip_thinking(raw_response, verbose=verbose)
     log_removed_thinking(prompt_idx, removed_thinking)
 
-    # Optional: for prompt 1, log cleaned head (helps debug stripping)
+    # Optional: for prompt 1, log cleaned head
     if prompt_idx == 0:
         head8 = "\n".join((cleaned_response or "").splitlines()[:8])
         with open("logs.txt", "a", encoding="utf-8") as log_file:
@@ -1171,7 +1252,6 @@ def check_response(prompt_idx, build_message_func, previous_responses, summary, 
             log_file.write(head8 + "\n")
             log_file.write("===========================================================\n\n")
 
-    # If attempt 3 produced Step 1+Step 2, keep only Step 2 (optional behavior)
     cleaned_response = keep_step2_only(cleaned_response)
 
     if verbose:
@@ -1184,14 +1264,13 @@ def check_response(prompt_idx, build_message_func, previous_responses, summary, 
         print("    [WARNING] Model returned meta/non-answer. Retrying with hard 'prose only' instruction...")
 
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
         with open("logs.txt", "a", encoding="utf-8") as log_file:
             log_file.write(f"\n===== META / NON-ANSWER DETECTED (Response {prompt_idx + 1}) =====\n")
             log_file.write(f"[{ts}] Prompt index: {prompt_idx}  Response number: {prompt_idx + 1}\n")
             log_file.write("-------------------------------------\n")
             log_file.write(cleaned_response + "\n")
             log_file.write("===========================================\n\n")
-            
+
         message_history, _ = build_message_func(prompt_idx, previous_responses)
         message_history.append({
             "role": "user",
@@ -1214,10 +1293,8 @@ def check_response(prompt_idx, build_message_func, previous_responses, summary, 
     if is_junk:
         print(f"[ALERT] Potential AI slop detected at prompt {prompt_idx} — Junk score: {junk_score}")
 
-    # ------------------------------------------------------------
-    # 7) Return cleaned response
-    # ------------------------------------------------------------
     return cleaned_response
+
 
 
 def read_story_file(story_file: str) -> str:
