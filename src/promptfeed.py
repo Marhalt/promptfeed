@@ -27,6 +27,8 @@ tokenizer = tiktoken.get_encoding("cl100k_base")
 
 prompts = []
 system_prompt = ""
+characters = ""
+voice = ""
 summary = ""
 story_file = None
 
@@ -243,7 +245,7 @@ def get_relevant_chunks(query, number_citations):
 # Prompt parsing
 # -----------------------------
 def parse_prompts_from_file(filename):
-    global prompts, system_prompt, summary, story_file
+    global prompts, system_prompt, characters, voice, summary, story_file
 
     with open(filename, "r", encoding="utf-8") as f:
         lines = f.readlines()
@@ -254,7 +256,7 @@ def parse_prompts_from_file(filename):
 
     def finalize_block():
         nonlocal current_block, current_tag
-        global summary, system_prompt, story_file, prompts
+        global summary, system_prompt, characters, voice, story_file, prompts
 
         if not current_tag or not current_block:
             current_block = []
@@ -268,6 +270,10 @@ def parse_prompts_from_file(filename):
             prompts.append(block_text)
         elif current_tag == "system":
             system_prompt += block_text + "\n"
+        elif current_tag == "characters":
+            characters += block_text + "\n"
+        elif current_tag == "voice":
+            voice += block_text + "\n"
         elif current_tag == "summary":
             summary += block_text + "\n"
         elif current_tag == "file" and not story_file:
@@ -291,7 +297,7 @@ def parse_prompts_from_file(filename):
         if stripped.startswith("&&") and stripped.endswith("&&"):
             finalize_block()
             tag = stripped.strip("&").lower()
-            if tag in ["prompt", "system", "summary", "file"]:
+            if tag in ["prompt", "system", "characters", "voice", "summary", "file"]:
                 current_tag = tag
             else:
                 current_tag = None
@@ -524,6 +530,9 @@ def build_message_history(
 
     system_blocks_final = [fixed_system_text]
     optional_used = 0
+    summary_toks = 0
+    scenes_toks = 0
+    story_toks = 0
 
     # Optional: summary
     if summary_text and summary_text.strip():
@@ -532,37 +541,9 @@ def build_message_history(
         if optional_used + t <= optional_budget:
             system_blocks_final.append(block)
             optional_used += t
+            summary_toks = t
 
-    # Optional: story context
-    if use_embeddings:
-        relevant_chunks = get_relevant_chunks(prompts[prompt_idx], number_citations)
-        if relevant_chunks:
-            header = "Relevant story context:"
-            header_t = tok(header)
-            if optional_used + header_t <= optional_budget:
-                system_blocks_final.append(header)
-                optional_used += header_t
-                for chunk in relevant_chunks:
-                    chunk = (chunk or "").strip()
-                    if not chunk:
-                        continue
-                    t = tok(chunk)
-                    if optional_used + t <= optional_budget:
-                        system_blocks_final.append(chunk)
-                        optional_used += t
-                    else:
-                        break
-    else:
-        if story_file and story_chunks:
-            full_story = (story_chunks[0] or "").strip()
-            if full_story:
-                block = "Full story context:\n" + full_story
-                t = tok(block)
-                if optional_used + t <= optional_budget:
-                    system_blocks_final.append(block)
-                    optional_used += t
-
-    # Optional: prior scenes
+    # Optional: prior scenes (before story context — most recent narrative beats are highest value)
     if consistent_scenes and prompt_idx > 0:
         prior = return_prompts[:prompt_idx]
         header = "Story so far (most recent first):"
@@ -584,6 +565,39 @@ def build_message_history(
             if len(tmp) > 1:
                 system_blocks_final.append("\n\n".join(tmp))
                 optional_used += tmp_used
+                scenes_toks = tmp_used
+
+    # Optional: story context
+    if use_embeddings:
+        relevant_chunks = get_relevant_chunks(prompts[prompt_idx], number_citations)
+        if relevant_chunks:
+            header = "Relevant story context:"
+            header_t = tok(header)
+            if optional_used + header_t <= optional_budget:
+                system_blocks_final.append(header)
+                optional_used += header_t
+                story_toks += header_t
+                for chunk in relevant_chunks:
+                    chunk = (chunk or "").strip()
+                    if not chunk:
+                        continue
+                    t = tok(chunk)
+                    if optional_used + t <= optional_budget:
+                        system_blocks_final.append(chunk)
+                        optional_used += t
+                        story_toks += t
+                    else:
+                        break
+    else:
+        if story_file and story_chunks:
+            full_story = (story_chunks[0] or "").strip()
+            if full_story:
+                block = "Full story context:\n" + full_story
+                t = tok(block)
+                if optional_used + t <= optional_budget:
+                    system_blocks_final.append(block)
+                    optional_used += t
+                    story_toks = t
 
     final_system_text = join_blocks(system_blocks_final)
     total_est = tok(final_system_text) + user_tokens
@@ -593,7 +607,25 @@ def build_message_history(
         {"role": "user", "content": user_text},
     ]
 
-    print(f"    [INFO] Context size for prompt {prompt_idx + 1}: {total_est} / {max_context_tokens} (est)")
+    def pct(n):
+        return f"{100 * n / max_context_tokens:.1f}%"
+
+    unused_toks = max(0, max_context_tokens - total_est)
+    breakdown_parts = [
+        f"system: {pct(fixed_system_tokens)}",
+        f"user: {pct(user_tokens)}",
+    ]
+    if scenes_toks:
+        breakdown_parts.append(f"scenes: {pct(scenes_toks)}")
+    if summary_toks:
+        breakdown_parts.append(f"summary: {pct(summary_toks)}")
+    if story_toks:
+        label = "embeddings" if use_embeddings else "story"
+        breakdown_parts.append(f"{label}: {pct(story_toks)}")
+    breakdown_parts.append(f"unused: {pct(unused_toks)}")
+
+    breakdown = "  ".join(breakdown_parts)
+    print(f"    [INFO] Context: {total_est:,} / {max_context_tokens:,} tokens  ({breakdown})")
     return message_history, final_system_text + "\n\n" + user_text
 
 
@@ -866,7 +898,12 @@ if __name__ == "__main__":
             print("Story file chunked and embeddings created.")
             print(f"Citations per prompt: {number_citations}")
 
-    base_system_prompt = system_prompt.strip()
+    system_parts = [system_prompt.strip()]
+    if characters.strip():
+        system_parts.append("Characters:\n" + characters.strip())
+    if voice.strip():
+        system_parts.append("Voice:\n" + voice.strip())
+    base_system_prompt = "\n\n".join(p for p in system_parts if p)
     summary_text = summary.strip() if summary else ""
     minimal_system_text = build_minimal_system_text()
 
