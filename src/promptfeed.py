@@ -265,7 +265,7 @@ def parse_prompts_from_file(filename):
         block_text = "\n".join(current_block).strip()
 
         if current_tag == "prompt":
-            if not block_text.lower().startswith("continue the story"):
+            if consistent_scenes and not block_text.lower().startswith("continue the story"):
                 block_text = f"Continue the story with {block_text[0].lower() + block_text[1:]}"
             prompts.append(block_text)
         elif current_tag == "system":
