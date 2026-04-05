@@ -303,6 +303,13 @@ def parse_prompts_from_file(filename):
                 current_tag = None
             continue
 
+        if re.match(r"^#{1,6}\s*\w", stripped):
+            tag = re.sub(r"^#+\s*", "", stripped).lower()
+            if tag in ["prompt", "system", "characters", "voice", "summary", "file"]:
+                finalize_block()
+                current_tag = tag
+                continue
+
         if current_tag:
             current_block.append(stripped)
 

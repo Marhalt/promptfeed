@@ -13,7 +13,11 @@ venv/
 Prompts/
 
 #nologs
-src/logs.txt
+*.txt
+*.log
+
+# Voice cards
+Voice cards/
 
 # System files
 .DS_Store
