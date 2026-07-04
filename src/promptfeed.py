@@ -916,14 +916,15 @@ if __name__ == "__main__":
 
     return_prompts = []
 
+    output_dir = os.path.dirname(os.path.abspath(filename))
     base_name = os.path.splitext(os.path.basename(filename))[0]
-    output_filename = f"results_{base_name}.txt"
+    output_filename = os.path.join(output_dir, f"results_{base_name}.txt")
 
     info = get_lm_studio_model_info()
     if info:
         model_name, _ = info
         safe_model_name = model_name.replace(" ", "_").replace("/", "_")
-        output_filename = f"{safe_model_name}_{base_name}.txt"
+        output_filename = os.path.join(output_dir, f"{safe_model_name}_{base_name}.txt")
 
     if verbose:
         print(f"Using output filename {output_filename}")
