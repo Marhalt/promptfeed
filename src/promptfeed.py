@@ -42,6 +42,8 @@ open("logs.txt", "w").close()
 
 filename_passed = False
 filename = ""
+rewrite_idx = None  # 1-indexed scene number to regenerate, or None for a full run
+resultsfile_override = None  # explicit results file path, overriding the auto-derived name
 
 FIRST_PROMPT_ID = "0001"
 
@@ -388,12 +390,37 @@ def read_arguments():
     import argparse
 
     global number_citations, temperature, consistent_scenes, max_context_tokens, refusal_mode, verbose
-    global filename, filename_passed, citations_arg
+    global filename, filename_passed, citations_arg, rewrite_idx, resultsfile_override
 
     parser = argparse.ArgumentParser(description="Story continuation program with embeddings and scene consistency.")
 
     parser.add_argument("-temp", "-temperature", type=float, default=temperature)
     parser.add_argument("-maxcontext", type=int, nargs="?")
+
+    parser.add_argument(
+        "-rewrite", "--rewrite",
+        type=int,
+        default=None,
+        metavar="X",
+        help=(
+            "Regenerate only scene X (1-indexed) instead of running the whole prompt file. "
+            "Uses the prior scenes already saved in the results_*.txt / <model>_*.txt output file "
+            "as context, then patches that one scene back into the file."
+        ),
+    )
+
+    parser.add_argument(
+        "-resultsfile", "--resultsfile",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Explicit path to the results/output file to read/write, overriding the auto-derived "
+            "results_<promptfile>.txt / <model>_<promptfile>.txt name. Use this with --rewrite if the "
+            "results file was moved/renamed, or if a different model is loaded now than during the "
+            "original run (the auto-derived name includes the model's display name)."
+        ),
+    )
 
     parser.add_argument(
         "-citations",
@@ -422,6 +449,8 @@ def read_arguments():
     consistent_scenes = args.consistent_scenes
     refusal_mode = args.refusal_mode
     verbose = args.verbose
+    rewrite_idx = args.rewrite
+    resultsfile_override = args.resultsfile
 
     if citations_arg is not None and citations_arg > 0:
         number_citations = citations_arg
@@ -457,7 +486,9 @@ def read_arguments():
     print(f"Max context tokens: {max_context_tokens} ({source})")
     print(f"Consistent scenes: {consistent_scenes}")
     print(f"Verbose: {verbose}")
-    print(f"Filename passed: {filename_passed}\n")
+    print(f"Filename passed: {filename_passed}")
+    print(f"Rewrite scene: {rewrite_idx if rewrite_idx is not None else 'off (full run)'}")
+    print(f"Results file override: {resultsfile_override or 'off (auto-derived name)'}\n")
 
 
 def select_prompt_file():
@@ -648,6 +679,17 @@ def read_story_file(story_file: str) -> str:
 
     with open(s, "r", encoding="utf-8", errors="replace") as f:
         return f.read()
+
+
+# -----------------------------
+# --rewrite support: write the single regenerated scene to its own sidecar
+# file next to the normal output file, e.g. results_prompt1_response_4.txt.
+# It never touches the main results file — patching it back in is left to
+# the user.
+# -----------------------------
+def build_rewrite_output_filename(output_filename: str, target_idx: int) -> str:
+    root, ext = os.path.splitext(output_filename)
+    return f"{root}_response_{target_idx}{ext}"
 
 
 # -----------------------------
@@ -926,11 +968,29 @@ if __name__ == "__main__":
         safe_model_name = model_name.replace(" ", "_").replace("/", "_")
         output_filename = os.path.join(output_dir, f"{safe_model_name}_{base_name}.txt")
 
+    if resultsfile_override:
+        output_filename = os.path.abspath(os.path.expanduser(resultsfile_override))
+        print(f"[INFO] Using explicit results file override: {output_filename}")
+
     if verbose:
         print(f"Using output filename {output_filename}")
 
-    for i in range(len(prompts)):
-        print(f"\n[{datetime.now().strftime('%H:%M')}] Generating prompt {i + 1} / {len(prompts)}")
+    if rewrite_idx is not None:
+        target = rewrite_idx - 1  # convert 1-indexed CLI arg to 0-indexed prompt slot
+
+        if target < 0 or target >= len(prompts):
+            print(f"[ERROR] --rewrite {rewrite_idx} is out of range (prompt file has {len(prompts)} prompts).")
+            sys.exit(1)
+
+        # Context comes from the prior PROMPTS, not previously generated scenes —
+        # the prompt file is always available (the program can't run without it),
+        # unlike the results file, which may have been moved, renamed, or never written.
+        return_prompts = prompts[:target]
+
+        print(
+            f"\n[{datetime.now().strftime('%H:%M')}] Rewriting scene {rewrite_idx} / {len(prompts)} "
+            "(--rewrite, using prior prompts as context)"
+        )
 
         build_message_func = lambda idx, prevs: build_message_history(
             prompt_idx=idx,
@@ -945,13 +1005,13 @@ if __name__ == "__main__":
             summary_text=summary_text,
         )
 
-        message_history, _ = build_message_func(i, return_prompts)
+        message_history, _ = build_message_func(target, return_prompts)
         user_text = message_history[-1]["content"]
 
         raw_response = send_prompt_to_llm(message_history)
 
         stripped_response = check_and_retry_one_prompt(
-            prompt_idx=i,
+            prompt_idx=target,
             build_message_func=build_message_func,
             previous_responses=return_prompts,
             raw_response=raw_response,
@@ -960,31 +1020,70 @@ if __name__ == "__main__":
             minimal_system_text=minimal_system_text,
         )
 
-        return_prompts.append(stripped_response)
-        token_count = count_tokens(stripped_response)
+        rewrite_output_filename = build_rewrite_output_filename(output_filename, target)
+        with open(rewrite_output_filename, "w", encoding="utf-8") as f:
+            f.write(stripped_response.strip() + "\n")
 
-        # Add response to embeddings if it's long
-        if use_embeddings and token_count >= max_context_tokens * 0.80:
-            new_embedding = embedding_model.encode([stripped_response])
-            embedding_index.add(new_embedding)
-            story_chunks.append(stripped_response)
-            if number_citations < 6:
-                number_citations += 1
-            if verbose:
-                print(f"[INFO] Embedded and added scene {i} to FAISS index (context limit reached).")
+        print(f"[INFO] Scene {rewrite_idx} written to '{rewrite_output_filename}'.")
+        print("[INFO] Main results file was not modified — patch the scene in yourself if you want to keep it.")
 
-        with open(output_filename, "a", encoding="utf-8") as outfile:
-            if i == 0:
-                outfile.write("Using prompt file: " + filename + "\n")
-                outfile.write("Using temperature: " + str(temperature) + "\n")
-                if use_embeddings:
-                    outfile.write(f"Using {number_citations} embeddings.\n")
-                if refusal_mode:
-                    outfile.write("Using refusal mode - all responses tested for refusal \n")
-                else:
-                    outfile.write("Normal mode - not testing for refusal \n\n")
+    else:
+        for i in range(len(prompts)):
+            print(f"\n[{datetime.now().strftime('%H:%M')}] Generating prompt {i + 1} / {len(prompts)}")
 
-            if verbose:
-                outfile.write(f"=== Prompt {i} ===\n{prompts[i]}\n\n")
+            build_message_func = lambda idx, prevs: build_message_history(
+                prompt_idx=idx,
+                prompts=prompts,
+                return_prompts=prevs,
+                consistent_scenes=consistent_scenes,
+                use_embeddings=use_embeddings,
+                number_citations=number_citations,
+                story_file=story_file,
+                story_chunks=story_chunks,
+                base_system_prompt=base_system_prompt,
+                summary_text=summary_text,
+            )
 
-            outfile.write(f"--- Response {i} ---\n{stripped_response}\n\n\n")
+            message_history, _ = build_message_func(i, return_prompts)
+            user_text = message_history[-1]["content"]
+
+            raw_response = send_prompt_to_llm(message_history)
+
+            stripped_response = check_and_retry_one_prompt(
+                prompt_idx=i,
+                build_message_func=build_message_func,
+                previous_responses=return_prompts,
+                raw_response=raw_response,
+                user_text=user_text,
+                call_llm=send_prompt_to_llm,
+                minimal_system_text=minimal_system_text,
+            )
+
+            return_prompts.append(stripped_response)
+            token_count = count_tokens(stripped_response)
+
+            # Add response to embeddings if it's long
+            if use_embeddings and token_count >= max_context_tokens * 0.80:
+                new_embedding = embedding_model.encode([stripped_response])
+                embedding_index.add(new_embedding)
+                story_chunks.append(stripped_response)
+                if number_citations < 6:
+                    number_citations += 1
+                if verbose:
+                    print(f"[INFO] Embedded and added scene {i} to FAISS index (context limit reached).")
+
+            with open(output_filename, "a", encoding="utf-8") as outfile:
+                if i == 0:
+                    outfile.write("Using prompt file: " + filename + "\n")
+                    outfile.write("Using temperature: " + str(temperature) + "\n")
+                    if use_embeddings:
+                        outfile.write(f"Using {number_citations} embeddings.\n")
+                    if refusal_mode:
+                        outfile.write("Using refusal mode - all responses tested for refusal \n")
+                    else:
+                        outfile.write("Normal mode - not testing for refusal \n\n")
+
+                if verbose:
+                    outfile.write(f"=== Prompt {i} ===\n{prompts[i]}\n\n")
+
+                outfile.write(f"--- Response {i} ---\n{stripped_response}\n\n\n")
