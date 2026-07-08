@@ -22,3 +22,4 @@ Voice cards/
 
 # System files
 .DS_Store
+src/logs.txt
