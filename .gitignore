@@ -15,6 +15,7 @@ Prompts/
 #nologs
 *.txt
 *.log
+src/logs.txt
 
 # Voice cards
 Voice cards/
