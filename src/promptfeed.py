@@ -364,7 +364,14 @@ def send_prompt_to_llm(message_history):
         response = requests.post(url, headers=headers, json=payload, timeout=7200)
         if response.status_code == 200:
             data = response.json()
-            return data["choices"][0]["message"]["content"].strip()
+            choice = data["choices"][0]
+            finish_reason = choice.get("finish_reason")
+            if finish_reason == "length":
+                print(
+                    "    [WARN] LLM response was cut off (finish_reason='length') — it ran out of "
+                    "context window space before finishing. The scene below may be truncated."
+                )
+            return choice["message"]["content"].strip()
 
         print(f"[ERROR] LLM server returned HTTP {response.status_code}: {response.text}")
         return "[ERROR] Invalid response from LLM server."
@@ -571,6 +578,7 @@ def build_message_history(
     summary_toks = 0
     scenes_toks = 0
     story_toks = 0
+    scene_prompt_fallbacks = 0
 
     # Optional: summary
     if summary_text and summary_text.strip():
@@ -581,25 +589,38 @@ def build_message_history(
             optional_used += t
             summary_toks = t
 
-    # Optional: prior scenes (before story context — most recent narrative beats are highest value)
+    # Optional: prior scenes (before story context — most recent narrative beats are highest value).
+    # Scenes that don't fit as full text fall back to their original guiding prompt (much cheaper)
+    # rather than being dropped outright, so older scenes stay represented at reduced fidelity.
     if consistent_scenes and prompt_idx > 0:
-        prior = return_prompts[:prompt_idx]
-        header = "Story so far (most recent first):"
+        header = (
+            "Story so far (most recent first). Scenes are the actual final text and take "
+            "precedence; some older scenes did not fit in full and are shown instead as the "
+            "guiding prompt originally used to write them, marked as such below."
+        )
         header_t = tok(header)
 
         if optional_used + header_t <= optional_budget:
             tmp = [header]
             tmp_used = header_t
-            for prev_scene in reversed(prior):
-                prev_scene = (prev_scene or "").strip()
-                if not prev_scene:
-                    continue
-                t = tok(prev_scene)
-                if optional_used + tmp_used + t <= optional_budget:
-                    tmp.append(prev_scene)
-                    tmp_used += t
-                else:
-                    break
+            for i in range(prompt_idx - 1, -1, -1):
+                prev_scene = (return_prompts[i] or "").strip()
+                if prev_scene:
+                    t = tok(prev_scene)
+                    if optional_used + tmp_used + t <= optional_budget:
+                        tmp.append(prev_scene)
+                        tmp_used += t
+                        continue
+                prev_prompt = (prompts[i] or "").strip()
+                if prev_prompt:
+                    block = f"[Scene {i + 1} — guiding prompt only, full text unavailable]\n{prev_prompt}"
+                    t = tok(block)
+                    if optional_used + tmp_used + t <= optional_budget:
+                        tmp.append(block)
+                        tmp_used += t
+                        scene_prompt_fallbacks += 1
+                        continue
+                break
             if len(tmp) > 1:
                 system_blocks_final.append("\n\n".join(tmp))
                 optional_used += tmp_used
@@ -654,7 +675,10 @@ def build_message_history(
         f"user: {pct(user_tokens)}",
     ]
     if scenes_toks:
-        breakdown_parts.append(f"scenes: {pct(scenes_toks)}")
+        scenes_label = f"scenes: {pct(scenes_toks)}"
+        if scene_prompt_fallbacks:
+            scenes_label += f" ({scene_prompt_fallbacks} as prompt-only)"
+        breakdown_parts.append(scenes_label)
     if summary_toks:
         breakdown_parts.append(f"summary: {pct(summary_toks)}")
     if story_toks:
@@ -893,6 +917,8 @@ def check_and_retry_one_prompt(
 # Main
 # -----------------------------
 if __name__ == "__main__":
+    run_start_time = datetime.now()
+
     read_arguments()
     select_prompt_file()
     parse_prompts_from_file(filename)
@@ -1087,3 +1113,15 @@ if __name__ == "__main__":
                     outfile.write(f"=== Prompt {i} ===\n{prompts[i]}\n\n")
 
                 outfile.write(f"--- Response {i} ---\n{stripped_response}\n\n\n")
+
+    elapsed = datetime.now() - run_start_time
+    total_seconds = int(elapsed.total_seconds())
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        elapsed_str = f"{hours}h {minutes}m {seconds}s"
+    elif minutes:
+        elapsed_str = f"{minutes}m {seconds}s"
+    else:
+        elapsed_str = f"{seconds}s"
+    print(f"\nFinished! Total time: {elapsed_str}")
