@@ -252,9 +252,11 @@ def resolve_block_file(block_text, base_dir):
     if not candidate or "\n" in candidate:
         return block_text, None
 
-    paths = [candidate]
-    if not os.path.isabs(candidate):
-        paths.insert(0, os.path.join(base_dir, candidate))
+    expanded = os.path.expanduser(candidate)
+
+    paths = [expanded]
+    if not os.path.isabs(expanded):
+        paths.insert(0, os.path.join(base_dir, expanded))
 
     for p in paths:
         if os.path.isfile(p):
@@ -718,13 +720,29 @@ def build_message_history(
 # -----------------------------
 # Story file
 # -----------------------------
-def read_story_file(story_file: str) -> str:
+def read_story_file(story_file: str, base_dir: str = None) -> str:
     s = story_file.strip()
     if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
         s = s[1:-1]
     s = s.replace("\\ ", " ").replace("\\'", "'").replace('\\"', '"')
     s = os.path.expanduser(s)
 
+    # Accept either an absolute/CWD-relative path or a bare filename that lives
+    # next to the prompt file. Prompt-file directory is tried first so a run
+    # folder can be moved anywhere without editing the &&file&& entry.
+    candidates = []
+    if base_dir and not os.path.isabs(s):
+        candidates.append(os.path.join(base_dir, s))
+    candidates.append(s)
+
+    for path in candidates:
+        if os.path.isfile(path):
+            if path != s:
+                print(f"[INFO] Loaded story from file next to prompt: {path}")
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                return f.read()
+
+    # Nothing matched — open the original path so the error names what was asked for.
     with open(s, "r", encoding="utf-8", errors="replace") as f:
         return f.read()
 
@@ -953,7 +971,7 @@ if __name__ == "__main__":
 
     if story_file:
         print("Reading target story file...")
-        story_text = read_story_file(story_file)
+        story_text = read_story_file(story_file, base_dir=os.path.dirname(os.path.abspath(filename)))
 
         full_story_token_count = count_tokens(story_text)
         print(f"Total story length in tokens: {full_story_token_count} \n")
