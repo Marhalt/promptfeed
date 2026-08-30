@@ -29,6 +29,7 @@ prompts = []
 system_prompt = ""
 characters = ""
 voice = ""
+voice_source_file = None  # path to external voice-card file, if &&voice&& pointed to one
 summary = ""
 story_file = None
 
@@ -58,11 +59,6 @@ use_embeddings = False
 number_citations = 5
 temperature = 0.85
 
-system_prepend = (
-    "You are an erotica assistant. Your role is to help the user write and edit "
-    "titillating and compelling erotica stories."
-)
-
 # Track how -citations was used:
 #   None  → flag not provided
 #   -1    → flag provided, no number
@@ -85,9 +81,9 @@ def get_temperature() -> float:
 def build_minimal_system_text() -> str:
     """
     Minimal system for prompt #1 grounding retry.
-    Uses ONLY your system_prepend + system_prompt.
+    Uses ONLY your system_prompt.
     """
-    return "\n\n".join([system_prepend.strip(), system_prompt.strip()]).strip()
+    return system_prompt.strip()
 
 
 def count_tokens(text: str) -> int:
@@ -246,8 +242,36 @@ def get_relevant_chunks(query, number_citations):
 # -----------------------------
 # Prompt parsing
 # -----------------------------
+def resolve_block_file(block_text, base_dir):
+    """
+    If block_text is a single line pointing to an existing file (absolute, or
+    relative to base_dir), return (file_contents, resolved_path). Otherwise
+    return (block_text, None) so it is treated as literal inline text.
+    """
+    candidate = block_text.strip()
+    if not candidate or "\n" in candidate:
+        return block_text, None
+
+    paths = [candidate]
+    if not os.path.isabs(candidate):
+        paths.insert(0, os.path.join(base_dir, candidate))
+
+    for p in paths:
+        if os.path.isfile(p):
+            with open(p, "r", encoding="utf-8") as vf:
+                content = vf.read().strip()
+            print(f"[INFO] Loaded voice from file: {p}")
+            return content, p
+
+    if re.search(r"\.(txt|md|markdown|card|json|ya?ml)$", candidate, re.IGNORECASE):
+        print(f"[WARN] Voice entry looks like a file path but no file was found: {candidate}")
+        print("       Using it as literal voice text instead.")
+
+    return block_text, None
+
+
 def parse_prompts_from_file(filename):
-    global prompts, system_prompt, characters, voice, summary, story_file
+    global prompts, system_prompt, characters, voice, voice_source_file, summary, story_file
 
     with open(filename, "r", encoding="utf-8") as f:
         lines = f.readlines()
@@ -258,7 +282,7 @@ def parse_prompts_from_file(filename):
 
     def finalize_block():
         nonlocal current_block, current_tag
-        global summary, system_prompt, characters, voice, story_file, prompts
+        global summary, system_prompt, characters, voice, voice_source_file, story_file, prompts
 
         if not current_tag or not current_block:
             current_block = []
@@ -275,7 +299,11 @@ def parse_prompts_from_file(filename):
         elif current_tag == "characters":
             characters += block_text + "\n"
         elif current_tag == "voice":
-            voice += block_text + "\n"
+            base_dir = os.path.dirname(os.path.abspath(filename))
+            resolved_voice, voice_src = resolve_block_file(block_text, base_dir)
+            voice += resolved_voice + "\n"
+            if voice_src:
+                voice_source_file = voice_src
         elif current_tag == "summary":
             summary += block_text + "\n"
         elif current_tag == "file" and not story_file:
@@ -537,7 +565,7 @@ def build_message_history(
     base_system_prompt,
     summary_text,
 ):
-    global max_context_tokens, system_prepend
+    global max_context_tokens
 
     def tok(s: str) -> int:
         return count_tokens(s or "")
@@ -548,11 +576,7 @@ def build_message_history(
     SAFETY_FRAC = 0.08
     hard_limit = int(max_context_tokens * (1.0 - SAFETY_FRAC))
 
-    fixed_system_blocks = []
-    if system_prepend and system_prepend.strip():
-        fixed_system_blocks.append(system_prepend.strip())
-    fixed_system_blocks.append((base_system_prompt or "").strip())
-    fixed_system_text = join_blocks(fixed_system_blocks)
+    fixed_system_text = (base_system_prompt or "").strip()
 
     if prompt_idx == 0:
         user_text = (
@@ -989,8 +1013,8 @@ if __name__ == "__main__":
     output_filename = os.path.join(output_dir, f"results_{base_name}.txt")
 
     info = get_lm_studio_model_info()
+    model_name = info[0] if info else None
     if info:
-        model_name, _ = info
         safe_model_name = model_name.replace(" ", "_").replace("/", "_")
         output_filename = os.path.join(output_dir, f"{safe_model_name}_{base_name}.txt")
 
@@ -1101,7 +1125,10 @@ if __name__ == "__main__":
             with open(output_filename, "a", encoding="utf-8") as outfile:
                 if i == 0:
                     outfile.write("Using prompt file: " + filename + "\n")
+                    outfile.write("Using model: " + (model_name or "unknown") + "\n")
                     outfile.write("Using temperature: " + str(temperature) + "\n")
+                    if voice_source_file:
+                        outfile.write("Using voice card: " + voice_source_file + "\n")
                     if use_embeddings:
                         outfile.write(f"Using {number_citations} embeddings.\n")
                     if refusal_mode:

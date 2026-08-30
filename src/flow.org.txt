@@ -39,7 +39,7 @@ LEGEND:
             │
             v
 ┌────────────────────────────────────────────────────────────────────┐
-│ [PF] minimal_system_text = system_prepend + system_prompt           │
+│ [PF] minimal_system_text = system_prompt                            │
 │  - used ONLY for prompt #1 grounding retry                          │
 └────────────────────────────────────────────────────────────────────┘
             │
@@ -57,7 +57,7 @@ LEGEND:
 ┌────────────────────────────────────────────────────────────────────┐
 │ [PF] build_message_history(i, return_prompts, ...)                  │
 │  Builds:                                                           │
-│   - system: prepend + base_system_prompt + (optional) summary       │
+│   - system: base_system_prompt + (optional) summary                 │
 │             + (optional) story context (embeddings/full)            │
 │             + (optional) prior scenes                               │
 │   - user: "FINAL PROMPT: ..."                                       │
