@@ -3,6 +3,7 @@ import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import sys
+import time
 import requests
 import glob
 import re
@@ -357,6 +358,45 @@ def parse_prompts_from_file(filename):
 # -----------------------------
 # LLM call
 # -----------------------------
+class LLMTransportError(Exception):
+    """
+    A request to the LLM server failed at the transport/HTTP level (timeout,
+    connection refused, non-200, malformed body). This is NOT a model refusal
+    or a weak answer — it must never be fed into the response-analysis /
+    refusal / meta-retry pipeline. Callers retry the same request or abort.
+    """
+
+
+LLM_MAX_ATTEMPTS = 2       # total tries for one request before giving up
+LLM_RETRY_DELAY_SECONDS = 15
+# Read timeout for a single generation. Large contexts on a local CPU/GPU can
+# take hours in the later stages of a run (observed ~1.5h), so this is generous.
+# Overridable with -timeout <minutes> on the command line.
+LLM_REQUEST_TIMEOUT_SECONDS = 4 * 3600  # 4 hours
+
+
+def call_llm_with_retries(message_history, *, attempts=LLM_MAX_ATTEMPTS):
+    """
+    Send one request, retrying the SAME request on transport errors. Raises
+    LLMTransportError if every attempt fails so the caller can abort cleanly.
+    """
+    last_err = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return send_prompt_to_llm(message_history)
+        except LLMTransportError as e:
+            last_err = e
+            if attempt < attempts:
+                print(
+                    f"    [WARN] LLM request failed ({e}). "
+                    f"Attempt {attempt}/{attempts}; retrying in {LLM_RETRY_DELAY_SECONDS}s..."
+                )
+                time.sleep(LLM_RETRY_DELAY_SECONDS)
+            else:
+                print(f"    [ERROR] LLM request failed ({e}). Attempt {attempt}/{attempts}; giving up.")
+    raise LLMTransportError(str(last_err))
+
+
 def send_prompt_to_llm(message_history):
     global LLM_MODE_CREATIVE, LLM_MODE_STABLE
 
@@ -391,32 +431,30 @@ def send_prompt_to_llm(message_history):
     headers = {"Content-Type": "application/json"}
 
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=7200)
-        if response.status_code == 200:
-            data = response.json()
-            choice = data["choices"][0]
-            finish_reason = choice.get("finish_reason")
-            if finish_reason == "length":
-                print(
-                    "    [WARN] LLM response was cut off (finish_reason='length') — it ran out of "
-                    "context window space before finishing. The scene below may be truncated."
-                )
-            return choice["message"]["content"].strip()
-
-        print(f"[ERROR] LLM server returned HTTP {response.status_code}: {response.text}")
-        return "[ERROR] Invalid response from LLM server."
-
+        response = requests.post(url, headers=headers, json=payload, timeout=LLM_REQUEST_TIMEOUT_SECONDS)
     except requests.exceptions.ConnectionError:
-        print("[ERROR] Could not connect to the LLM server at http://127.0.0.1:1234. Is it running?")
-        sys.exit(1)
-
+        raise LLMTransportError("could not connect to LLM server at http://127.0.0.1:1234 — is it running?")
     except requests.exceptions.Timeout:
-        print("[ERROR] Request to LLM server timed out.")
-        return "[ERROR] LLM request timed out."
+        raise LLMTransportError("request to LLM server timed out")
+    except requests.exceptions.RequestException as e:
+        raise LLMTransportError(f"request error: {e}")
 
-    except Exception as e:
-        print(f"[ERROR] Unexpected error while calling LLM: {str(e)}")
-        return "[ERROR] Unexpected error from LLM."
+    if response.status_code != 200:
+        raise LLMTransportError(f"LLM server returned HTTP {response.status_code}: {response.text[:500]}")
+
+    try:
+        data = response.json()
+        choice = data["choices"][0]
+    except (ValueError, KeyError, IndexError) as e:
+        raise LLMTransportError(f"malformed response body from LLM server: {e}")
+
+    finish_reason = choice.get("finish_reason")
+    if finish_reason == "length":
+        print(
+            "    [WARN] LLM response was cut off (finish_reason='length') — it ran out of "
+            "context window space before finishing. The scene below may be truncated."
+        )
+    return choice["message"]["content"].strip()
 
 
 # -----------------------------
@@ -428,11 +466,23 @@ def read_arguments():
 
     global number_citations, temperature, consistent_scenes, max_context_tokens, refusal_mode, verbose
     global filename, filename_passed, citations_arg, rewrite_idx, resultsfile_override
+    global LLM_REQUEST_TIMEOUT_SECONDS
 
     parser = argparse.ArgumentParser(description="Story continuation program with embeddings and scene consistency.")
 
     parser.add_argument("-temp", "-temperature", type=float, default=temperature)
     parser.add_argument("-maxcontext", type=int, nargs="?")
+    parser.add_argument(
+        "-timeout", "--timeout",
+        type=float,
+        default=None,
+        metavar="MINUTES",
+        help=(
+            "Per-generation read timeout in minutes before a request counts as failed "
+            f"(default {LLM_REQUEST_TIMEOUT_SECONDS // 60}). Large contexts on local hardware "
+            "can take hours in the later stages of a run."
+        ),
+    )
 
     parser.add_argument(
         "-rewrite", "--rewrite",
@@ -489,6 +539,9 @@ def read_arguments():
     rewrite_idx = args.rewrite
     resultsfile_override = args.resultsfile
 
+    if args.timeout is not None:
+        LLM_REQUEST_TIMEOUT_SECONDS = int(args.timeout * 60)
+
     if citations_arg is not None and citations_arg > 0:
         number_citations = citations_arg
 
@@ -525,7 +578,8 @@ def read_arguments():
     print(f"Verbose: {verbose}")
     print(f"Filename passed: {filename_passed}")
     print(f"Rewrite scene: {rewrite_idx if rewrite_idx is not None else 'off (full run)'}")
-    print(f"Results file override: {resultsfile_override or 'off (auto-derived name)'}\n")
+    print(f"Results file override: {resultsfile_override or 'off (auto-derived name)'}")
+    print(f"LLM request timeout: {LLM_REQUEST_TIMEOUT_SECONDS // 60} min\n")
 
 
 def select_prompt_file():
@@ -1076,17 +1130,21 @@ if __name__ == "__main__":
         message_history, _ = build_message_func(target, return_prompts)
         user_text = message_history[-1]["content"]
 
-        raw_response = send_prompt_to_llm(message_history)
+        try:
+            raw_response = call_llm_with_retries(message_history)
 
-        stripped_response = check_and_retry_one_prompt(
-            prompt_idx=target,
-            build_message_func=build_message_func,
-            previous_responses=return_prompts,
-            raw_response=raw_response,
-            user_text=user_text,
-            call_llm=send_prompt_to_llm,
-            minimal_system_text=minimal_system_text,
-        )
+            stripped_response = check_and_retry_one_prompt(
+                prompt_idx=target,
+                build_message_func=build_message_func,
+                previous_responses=return_prompts,
+                raw_response=raw_response,
+                user_text=user_text,
+                call_llm=call_llm_with_retries,
+                minimal_system_text=minimal_system_text,
+            )
+        except LLMTransportError as e:
+            print(f"\n[FATAL] Could not get a response from the LLM server ({e}). Nothing was written.")
+            sys.exit(1)
 
         rewrite_output_filename = build_rewrite_output_filename(output_filename, target)
         with open(rewrite_output_filename, "w", encoding="utf-8") as f:
@@ -1115,17 +1173,26 @@ if __name__ == "__main__":
             message_history, _ = build_message_func(i, return_prompts)
             user_text = message_history[-1]["content"]
 
-            raw_response = send_prompt_to_llm(message_history)
+            try:
+                raw_response = call_llm_with_retries(message_history)
 
-            stripped_response = check_and_retry_one_prompt(
-                prompt_idx=i,
-                build_message_func=build_message_func,
-                previous_responses=return_prompts,
-                raw_response=raw_response,
-                user_text=user_text,
-                call_llm=send_prompt_to_llm,
-                minimal_system_text=minimal_system_text,
-            )
+                stripped_response = check_and_retry_one_prompt(
+                    prompt_idx=i,
+                    build_message_func=build_message_func,
+                    previous_responses=return_prompts,
+                    raw_response=raw_response,
+                    user_text=user_text,
+                    call_llm=call_llm_with_retries,
+                    minimal_system_text=minimal_system_text,
+                )
+            except LLMTransportError as e:
+                print(
+                    f"\n[FATAL] LLM server stopped responding at prompt {i + 1} / {len(prompts)} ({e})."
+                )
+                if i > 0:
+                    print(f"        Scenes 1..{i} are already saved in '{output_filename}'.")
+                print("        Fix the server and re-run.")
+                sys.exit(1)
 
             return_prompts.append(stripped_response)
             token_count = count_tokens(stripped_response)
