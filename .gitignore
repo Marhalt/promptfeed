@@ -17,6 +17,10 @@ Prompts/
 *.log
 src/logs.txt
 
+# ...but do track the bundled example prompt files
+!examples/
+!examples/**
+
 # Voice cards
 Voice cards/
 

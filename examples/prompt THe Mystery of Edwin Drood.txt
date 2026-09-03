@@ -1,0 +1,159 @@
+// All sections in a prompt file are start with &&...&& 
+// and end when the parser encounters 2 empty lines.
+
+// Any comments in lines starting with // are ignored by 
+// the parser
+
+// The &&summary&& block summarizes the story that you want to 
+// continue. You can include the full story in &&story&& below,
+// but if the story is long, &&summary&& is more useful. 
+// &&summary&& is optional. If not included, the program will
+// look for &&story&& and manage with that.  
+// &&summary&& size should not be too big - it is included with
+// every request made to the LLM. 1-2 pages is generally fine.
+// If your story is complex and needs it, you can have longer
+// summaries, but always have the smallest summary that 
+// will have the critical information you need for your story. 
+// &&summary&& should be the story BEFORE your prompts 
+// take place
+
+&&summary&&
+The Mystery of Edwin Drood is set in Cloisterham, a quiet English cathedral town modeled on Rochester. At its center is John Jasper, the cathedral's choirmaster: outwardly a respectable, devoted young man, but secretly an opium addict who slips off to a squalid London den run by an old woman known as "Princess Puffer" to feed his habit. Jasper is uncle and guardian-figure to Edwin Drood, though the two are close in age and more like brothers. Edwin has been engaged since childhood, by his late father's arrangement, to Rosa Bud, a pretty, orphaned girl who boards at Miss Twinkleton's academy in Cloisterham. Neither Edwin nor Rosa is passionately in love with the other; the engagement feels to both more like an inherited obligation than a choice. Unknown to Edwin, Jasper is obsessed with Rosa himself, nursing a controlled, possessive infatuation behind his mask of avuncular affection, and Rosa privately finds Jasper's attentions unsettling in a way she can't quite name.
+Into this settled arrangement come Neville and Helena Landless, orphaned twins newly arrived from Ceylon. Neville is placed under the tutelage of the kindly, athletic Reverend Septimus Crisparkle, while Helena joins Rosa at Miss Twinkleton's. Neville, raised harshly and prone to sudden temper, falls for Rosa almost immediately and takes an instant dislike to Edwin's careless, faintly condescending manner toward her. Helena, sharper and more self-possessed than her brother, senses something wrong in Jasper's fixation on Rosa and distrusts him on sight. At a dinner Jasper arranges at his own lodgings, ostensibly to bring the two young men together, simmering tension boils over: goaded by Edwin's thoughtlessness and, it's suggested, by wine Jasper has doctored, Neville nearly comes to blows with him. Jasper subsequently and pointedly reports the incident around town, planting the idea that Neville is dangerously volatile and fixated on Edwin.
+Privately, and without telling anyone else, Edwin and Rosa meet and agree to break off their engagement, both relieved to discover the affection between them is more sibling than romantic. Edwin visits Rosa's guardian, the fussy but good-hearted London lawyer Hiram Grewgious, who entrusts him with a ring that belonged to Rosa's mother, meant for Edwin to give Rosa if the marriage goes forward. Since the engagement is already off, Edwin never gives it to her, and instead simply carries the ring back with him to Cloisterham, telling no one it exists.
+On a stormy Christmas Eve, Jasper hosts another dinner meant to smooth things over between Edwin and Neville, plying both with mulled wine. The two young men part that night apparently on decent terms, with Edwin and Neville said to have gone down toward the river together to look at the weather. It is the last anyone sees of Edwin Drood. By morning he has vanished without a trace. Neville, who had already planned an early walking trip out of town, is overtaken on the road, dragged back, and immediately suspected, his earlier quarrel with Edwin now treated as damning evidence. No body is ever found, only Edwin's watch, chain, and shirt-pin, dredged from the weir at Jasper's own anxious insistence. With nothing more concrete to go on, Neville is released, but he is ruined in the town's eyes; Crisparkle, believing firmly in his innocence, helps him relocate to a solitary lodging in London.
+Jasper, meanwhile, is consumed by a grief that looks less like mourning and more like obsession. He seeks out Rosa and declares his love for her outright, framing it almost as a threat: he all but tells her that Neville's safety depends on how she responds to him. Terrified, Rosa flees to Grewgious in London and tells him everything, including the fact that she and Edwin had already ended their engagement before his disappearance — a secret that, once it reaches Jasper, destroys the assumption everyone had been making, including Jasper himself, that jealousy over Rosa was Edwin's obvious motive for staying away, or a rival's motive for wanting him gone.
+Some months later, a mysterious white-haired stranger calling himself Dick Datchery arrives in Cloisterham and takes lodgings, presenting himself as an idle retired gentleman with nothing to do but poke around town. In fact he is quietly investigating, striking up conversations with Durdles, the cathedral's stonemason, who knows the crypts and tombs intimately and who once let Jasper get him drunk and lead him through the crypt alone at night on the pretext of curiosity, and who is also the source of the quicklime kept on hand in the cathedral precincts. Datchery keeps a private chalk tally on the inside of his cupboard door, marking up a score against someone whose name he does not say aloud. In the novel's final completed chapter, Princess Puffer, the opium-den woman, has followed Jasper down from London to watch him, having pieced together from his drugged ramblings that he means harm to someone. She and Datchery cross paths in Cloisterham; after learning something from her that confirms his suspicions, Datchery adds another mark to his tally and murmurs to himself, "I don't like it." 
+
+
+// &&characters&& (or &&character&&) is a section which feeds the
+// LLM an outline of who the main characters are. 
+// Physical look, personality, affects, links, anything
+// else that the LLM will need to know. Keep in mind that the 
+// LLM will know what happens to the characters as part of the 
+// this prompt file. This section should define the characters
+// as they are at the beginning of the story, before your prompts.
+
+&&character&&
+John Jasper — Cloisterham Cathedral's choirmaster, in his mid-twenties, outwardly earnest, musical, and devoted to his nephew Edwin. Beneath that surface he is an opium addict who leads a double life, harboring a controlled but consuming obsession with Rosa Bud that he conceals from everyone, including himself half the time. Charming, watchful, and quietly manipulative, he is the character every reader suspects, though Dickens never confirms exactly what Jasper did or how far his plotting went.
+Edwin Drood — A pleasant, somewhat careless young man of about twenty, engaged to Rosa Bud since childhood by his late father's wish. He treats the engagement casually and without much self-examination, is fond of his uncle Jasper without ever suspecting him, and is generally likable but a little thoughtless, particularly toward Neville. He and Rosa quietly agree to end their engagement shortly before he vanishes, a fact he tells almost no one.
+Rosa Bud — An orphaned, high-spirited, and rather sheltered young woman who boards at Miss Twinkleton's academy. She has been engaged to Edwin since they were children and, though fond of him, feels the match was never truly her own choice. She is instinctively frightened by Jasper's intensity long before she understands why, and after his open declaration of love, flees to her guardian for protection.
+Neville Landless — A young man newly arrived from Ceylon with his twin sister Helena, placed under Reverend Crisparkle's tutelage. Raised under a harsh, unloving guardian, he has a genuine and self-aware temper that he is trying to master, along with real depth of feeling. He falls for Rosa almost at once, clashes bitterly with Edwin, and becomes the town's chief suspect after Edwin's disappearance, despite there being no real proof against him.
+Helena Landless — Neville's twin, and by most accounts the stronger-willed and more perceptive of the two. Composed, protective of her brother, and quick to see through Jasper's performance of avuncular concern, she is one of the few characters in the book who seems to understand what is actually happening around her. Her closeness with Rosa at school gives her real insight into Rosa's fears.
+Reverend Septimus Crisparkle — A cheerful, physically robust, and thoroughly decent clergyman who takes Neville on as a pupil and becomes his steadfast defender after Edwin's disappearance. He represents plain, unglamorous goodness in the novel and is one of the few adults who consistently acts on principle rather than suspicion or self-interest.
+Hiram Grewgious — Rosa's guardian, a precise, dry, kind-hearted London lawyer who managed her late mother's affairs. Fussy in manner but fiercely loyal underneath it, he becomes Rosa's protector once she flees Cloisterham, and he is the one who eventually confronts Jasper with the fact that Edwin and Rosa's engagement had already ended.
+Princess Puffer — The proprietress of the opium den Jasper frequents in London, an aged, sharp-eyed woman who works out more about Jasper's secret intentions from his drugged mutterings than he realizes. She follows him to Cloisterham to watch him, and her knowledge makes her one of the story's few characters actively pursuing the truth.
+Dick Datchery — A white-haired stranger who arrives in Cloisterham some time after Edwin's disappearance, claiming to be an idle retired gentleman but clearly conducting a quiet investigation of his own. He keeps a private chalk tally of some kind inside his lodgings, and his real identity — a disguised character from earlier in the book, or someone new — is the novel's other great unsolved puzzle.
+Durdles — The cathedral's stonemason, a gruff, hard-drinking man with unmatched knowledge of Cloisterham's crypts, tombs, and the quicklime kept on the grounds. Jasper once maneuvered him into a drunken night tour of the crypt, an episode that takes on ominous weight after Edwin vanishes.
+
+
+// &&system&& is the high-level instructions to the LLM. Keep
+// this section short. It is where a specific instructions 
+// for a particular novel would be, for example, or a reminder
+// about something else that is vitally important. &&system&&
+// is treated by the program as the most important block in the 
+// parse file. It is not optional - every prompt file needs a 
+// &&system&& section, even an empty one. 
+
+&&system&&
+You are a writer. Follow the instructions in the voice card to write the chapters as per the outline given. End the chapters where the outline ends. Instructions given in square brackets [like this] are instructions for you - so [Make this a shorter chapter], for example, is designed to help you write chapters as the user wants them written. 
+Tone calibration for Edwin Drood specifically. This is a later, more disciplined Dickens than the sprawling comic novels — the sentences can still be long, but the comedy is sparer and the atmosphere is closer to gothic suspense than to farce. Favor a slow, controlled build of dread around Jasper: give the reader glimpses of his private mind without full disclosure, so his guilt or innocence stays genuinely uncertain. Chapters should often end on a small, pointed note of suspense, unease, or unresolved implication — a look, an unfinished sentence, a detail left dangling — in keeping with Dickens's serialized, cliffhanger-driven original structure. Keep the mystery elements grounded in physical, tangible clues (a found object, an overheard remark, a chalk mark) rather than melodrama.
+
+
+// &&voice&& is a section that can be inline (a set of 
+// paragraphs) or a link to a file. It should be the way
+// the llm should write, the tonality. It defines the writing
+// style. It is an optional segment - if omitted, the LLM will
+// default to its nominal register, modified by &&system&&.
+// This particular example refers to an external file that 
+// mimics Charles Dickens. Keep this section to a 
+// few paragraphs. Voice cards above a page are less effective.
+
+&&voice&&
+'Voice card Charles Dickens.txt'
+
+
+// &&file&& is an optional section that has the original story 
+// you are continuing or extending. It has to be a valid file
+// either in absolute path or in the same directory as the 
+// prompt file. If the file is very long, the program will embed 
+// citations relevant for each chapter prompt. If the file is 
+// small enough to fit into the context length, it will be 
+// loaded completely. This example file is chapter 1-23 of the story,
+// as Dickens wrote it before stopping:
+
+&&file&&
+'Edwin Drood.txt'
+
+
+// The heart of the prompt file is a series of &&prompt&& sections.
+// Each &&prompt&& is a chapter that you want the LLM to write. 
+// Each &&prompt&& segment can be as specific as you wish. 
+// This one, for example, is relatively high-level. It create
+// a shorter Dickens chapter:
+
+&&prompt&&
+Chapter XXIV — The Chalk Score. [2000 words] 
+Datchery meets Princess Puffer again in Cloisterham; her account of Jasper's drugged ramblings about a "journey" he has rehearsed "a hundred thousand times" convinces Datchery she's found her man. Rather than act alone, she resolves to bring what she knows to Grewgious in London. Jasper, sensing he is being watched, grows more erratic beneath his composed public grief, and begins returning to the crypt alone at night.
+
+
+// &&prompt&& can be very detailed, too:
+
+&&prompt&&
+CHAPTER XXV — A Confidence in Staple Inn [4,500 words]
+Beat 1: Journey and arrival (~450 words). Helena — traveling under the Datchery disguise — takes the road to London, tense at the risk of exposure this far from Cloisterham. Brief interiority: her worry over Neville's declining health and isolation, and her resolve that only decisive action, not waiting, will clear his name. She arrives at Staple Inn in the fog and failing light, its ancient, quiet courtyard a contrast to the danger she's carrying.
+Beat 2. Grewgious's chambers (~350 words). Atmospheric description of the cluttered, precisely-ordered rooms. A texture beat with Bazzard, Grewgious's clerk — oddly watchful, lingering a moment too long before announcing the visitor. (Keep him a loose, unresolved thread here — true to Dickens's habit of scattering suspicious details that don't necessarily pay off; useful red herring texture given some real-world theories cast Bazzard as Datchery.)
+Beat 3: The interview opens (~300 words). Grewgious receives "Mr. Datchery" with polite puzzlement — he doesn't know this visitor. Datchery asks for a strictly private word, no clerk present. Grewgious's courtesy sharpens into wariness.
+Beat 4: The unmasking (~550 words). Datchery reveals herself as Helena Landless. Grewgious's shock gives way quickly to his practical, legal-minded self — he starts asking precise questions rather than simply marveling. Helena explains, briefly and without self-pity, why she took up the disguise: no one else was looking closely enough at Jasper, and she could not sit in Cloisterham while her brother's name was destroyed.
+Beat 5: Helena's report, part one — the crypt (~375 words). She lays out what she's observed of Jasper's repeated nighttime visits with Durdles, and the drink-loosened details Durdles let slip about a particular vault. Grewgious interjects with sharp, specific questions (dates, exact words used) — a chance to show his precise character through dialogue rather than description.
+Beat 6: Helena's report, part two — the opium den (~425 words). Princess Puffer's account, relayed through Helena: Jasper's drugged ramblings about "a journey" rehearsed "a hundred thousand times," and a phrase about being rid of "a stumbling-block." Mention that Puffer has followed Jasper to Cloisterham specifically to watch him herself, unprompted by anyone.
+Beat 7: Helena's report, part three — Rosa (~325 words). Jasper's continuing, escalating declarations of love to Rosa, framed as implicit threats tied to Neville's safety — reinforcing the danger and giving Grewgious a personal, protective stake in acting.
+Beat 8: Grewgious's reaction (~300 words). A quiet pause. He moves to the fire, visibly shaken, reflecting on his own guilt at ever having trusted Jasper near any part of Rosa's affairs — a beat of restrained, very Grewgious-like emotion (precise language masking real feeling).
+Beat 9: The disclosure of the ring (~750 words). Grewgious tells Helena the ring's full history: diamonds and rubies in gold, Rosa's dead mother's ring, given by her father as a pledge, entrusted to Grewgious, then passed to Edwin the very day he disappeared — with instructions to give it to Rosa as a "solemn seal" if the marriage stood, or return it to Grewgious if anything was amiss. Grewgious now realizes, with dawning horror, that Edwin — having broken the engagement with Rosa hours earlier that same day — should have returned the ring immediately, and never did. He stresses that no one else alive knows the ring exists: not Rosa, and certainly not Jasper.
+Beat 10: Strategy (~375 words). They agree they lack proof enough for the authorities yet. The next step is finding a way into the specific vault Durdles described. Helena will return to Cloisterham and continue as Datchery; Grewgious insists on strict secrecy — including from Rosa and Neville, to protect them and avoid any risk of word reaching Jasper.
+Beat 11: Closing hook (~250 words). Helena departs at dusk. A final glimpse of Bazzard, oddly attentive again, folding away a paper too quickly as she passes — an unresolved, faintly ominous note. She leaves into the fog aware that the real work is only beginning.
+
+
+// The prompt below is a good middle-of-the-road to start with:
+
+&&prompt&&
+CHAPTER XXVI — What Durdles Knew (outline, moderate detail)
+Grewgious comes down from London to Cloisterham himself — a rare move for him — now that the ring has turned suspicion into something worth acting on. He and Datchery agree they need Durdles's memory of the night Jasper led him through the crypt, the "Night with Durdles" episode Jasper himself engineered, without alerting Durdles to why it matters.
+Rather than a direct interview, they use Durdles's own routine as cover: Datchery finds him being seen home as usual by Deputy's ritual of pelting him with stones to hurry him along, and simply walks him the rest of the way, standing him a drink once they're indoors. Durdles, flattered by the attention and loosened by drink, talks more freely than he would under direct questioning.
+Prompted gently, he recalls fragments of that earlier night: Jasper's questions about the crypt's "old 'uns," about which vaults still had room, about how the quicklime worked and how fast. He remembers waking with his keys briefly missing and a vague sense that Jasper had gone somewhere alone while he slept off the drink. He also mentions, almost as an aside, that some of his quicklime "went" sometime after that night — less than he expected to find — though he'd never thought much of it until now.
+Datchery and Grewgious quietly cross-reference Durdles's scattered details — the missing quicklime, the vault near Mrs. Sapsea's monument, the odd chill Durdles remembers noting — into a working idea of exactly where to look. Keep this a two-hander of careful, restrained dialogue rather than exposition; their growing certainty should come through what they don't say aloud as much as what they do.
+Rather than break in on their own suspicion, they agree to arrange a legitimate pretext for opening that specific vault — Grewgious's legal standing gives him a plausible reason to request it through the right channels (Sapsea, or the Dean) without revealing what they actually suspect. A date is set for the search.
+[End on something that raises the temperature going into Chapter XXVII — Deputy mentions, offhand, that he's seen "the gentleman as sings in the choir" down near the crypt more than once after dark; or Jasper himself, elsewhere in town, notices Datchery and Durdles together and grows visibly uneasy for the first time. Either works as a hook; pick whichever you'd rather build on.]
+
+
+// You can use [] to give the LLM instructions (remember
+// to specify this capability in &&system&&, as in this
+// prompt file, if you want to use it. This is a good
+// example of how to do it:
+
+&&prompt&&
+CHAPTER XXVII — The Ring 
+[Overall: this chapter can run shorter than XXV. The emotional weight of one discovery matters more than incident — favor economy everywhere except where noted below.]
+The search party — Datchery, Grewgious, and enough official presence to make it lawful — enters the vault they identified in Chapter XXVI. [Keep the entry and the mechanics of the search brief. A sentence or two of atmosphere is fine, but don't linger on procedure — this isn't the part of the chapter that matters.]
+They find what the quicklime left behind. [Handle this with restraint. Dickens would not describe remains explicitly — convey the horror through the characters' reactions and a few oblique physical details, not through direct description. A short paragraph is enough.]
+Among it, untouched by the lime, is the ring. [This is the emotional and structural climax of the chapter — slow down here. Let recognition build for a beat or two before anyone speaks or names what they're looking at. This single moment is worth as much space as the rest of the chapter combined.]
+The immediate reaction. [Play this primarily through dialogue between Grewgious and Helena — spare, restrained language. Let what goes unsaid carry more weight than what's said aloud. No speechifying; Grewgious in particular should underreact on the surface while the prose signals what it's costing him.]
+Securing the evidence and leaving the vault. [Brief wrap-up — a few sentences, not a scene. This is administrative; move past it quickly and end the chapter soon after the ring is found, not after a long denouement.]
+
+
+// You can also use a different outline than purely 
+// chronological to write a chapter.
+// Note - for this to work, the LLM you use should be 
+// reasonably smart. 
+
+&&prompt&&
+CHAPTER XXIX — The Condemned Cell 
+[Technique note: this outline does not specify plot events or scene mechanics — no instructions about who visits, what is said, whether there's a trial scene recapped or skipped. Only the interior trajectory is fixed. Invent whatever scene mechanics best serve each movement — a visitor, a memory, silence, an object in his hands — as long as the emotional arc below is honored in sequence.]
+Movement I — Studying a stranger (~first third of the chapter). Jasper's opening state is detachment, almost clinical: he examines his own crime the way he might examine someone else's, from the outside, without the heat of guilt or the comfort of denial. This should read as genuinely strange rather than as obvious evasion — he isn't lying to himself so much as standing slightly outside himself, the way Forster described Dickens's actual intention for these final chapters. Let a recurring motif — music, or the choir he led for years, or the ring now surrendered as evidence — surface here as something he can turn over almost academically, without yet feeling its weight.
+Movement II — The crack (~middle third). Something specific and small — not a grand confrontation — pierces the detachment for the first time: a fragment of remembered music, Edwin's name spoken plainly by someone rather than avoided, the physical fact of the ring being shown to him. The self-examining distance from Movement I should fail here, briefly but completely. This is the one place in the chapter that can afford to slow down; everything before and after it can move faster.
+Movement III — What's left (final third). The detachment doesn't fully return, but something does settle — not remorse exactly, not peace, and specifically not redemption. Aim for something closer to relief at having been stopped, sitting uneasily alongside whatever genuine feeling broke through in Movement II. Resist tidying this into a clear moral conclusion; Dickens's irony toward Jasper throughout the book argues against a clean ending for him even here.
+Coda — the survivors (brief, tonal rather than event-driven). The established facts stand as already fixed at the top-level arc — Neville's death with his name cleared, Helena and Crisparkle's marriage, Rosa building an independent life — but render them quickly and without triumph. The tone should be quiet exhaustion rather than resolution: a town returning to normal because towns do, not because anything has been made right.
+
+// You can have as many chapters as you want, but with even very large context lengths, consistency 
+// will start to suffer after about 10 chapters. You can then create a book out of those, and start a 
+// new book with an enhanced &&summary&& section that now covers the original story and book 1. 
