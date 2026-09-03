@@ -246,6 +246,22 @@ def get_relevant_chunks(query, number_citations):
 # -----------------------------
 # Prompt parsing
 # -----------------------------
+def normalize_path_entry(raw: str) -> str:
+    """
+    Turn a path as typed in a prompt file into a real filesystem path. Handles the
+    ways different machines / file managers hand you a path that contains spaces:
+      - wrapped in single or double quotes:   'Voice Card.txt'   "Voice Card.txt"
+      - shell-escaped (Terminal drag-and-drop):   Voice\\ Card\\ \\(2\\).txt
+      - a leading ~ for the home directory
+    """
+    s = raw.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
+        s = s[1:-1]  # quoted → contents are already literal
+    else:
+        s = re.sub(r"\\(.)", r"\1", s)  # unquoted → undo backslash-escaping
+    return os.path.expanduser(s)
+
+
 def resolve_block_file(block_text, base_dir):
     """
     If block_text is a single line pointing to an existing file (absolute, or
@@ -256,7 +272,7 @@ def resolve_block_file(block_text, base_dir):
     if not candidate or "\n" in candidate:
         return block_text, None
 
-    expanded = os.path.expanduser(candidate)
+    expanded = normalize_path_entry(candidate)
 
     paths = [expanded]
     if not os.path.isabs(expanded):
@@ -269,7 +285,7 @@ def resolve_block_file(block_text, base_dir):
             print(f"[INFO] Loaded voice from file: {p}")
             return content, p
 
-    if re.search(r"\.(txt|md|markdown|card|json|ya?ml)$", candidate, re.IGNORECASE):
+    if re.search(r"""\.(txt|md|markdown|card|json|ya?ml)['"]?$""", candidate, re.IGNORECASE):
         print(f"[WARN] Voice entry looks like a file path but no file was found: {candidate}")
         print("       Using it as literal voice text instead.")
 
@@ -823,11 +839,7 @@ def build_message_history(
 # Story file
 # -----------------------------
 def read_story_file(story_file: str, base_dir: str = None) -> str:
-    s = story_file.strip()
-    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
-        s = s[1:-1]
-    s = s.replace("\\ ", " ").replace("\\'", "'").replace('\\"', '"')
-    s = os.path.expanduser(s)
+    s = normalize_path_entry(story_file)
 
     # Accept either an absolute/CWD-relative path or a bare filename that lives
     # next to the prompt file. Prompt-file directory is tried first so a run
