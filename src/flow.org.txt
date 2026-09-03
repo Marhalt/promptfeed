@@ -56,12 +56,15 @@ LEGEND:
             v
 ┌────────────────────────────────────────────────────────────────────┐
 │ [PF] build_message_history(i, return_prompts, ...)                  │
-│  Builds:                                                           │
-│   - system: base_system_prompt + (optional) summary                 │
-│             + (optional) story context (embeddings/full)            │
-│             + (optional) prior scenes                               │
-│   - user: "FINAL PROMPT: ..."                                       │
+│  Builds (stable content first so the server KV cache can reuse it): │
+│   - system: <system directives>                                     │
+│             + <voice> + <characters>                                │
+│             + (optional) <summary>                                  │
+│             + (optional) <reference_story> / <retrieved_context>    │
+│             + (optional) <story_so_far> with <scene n="..">  (grows)│
+│   - user: task line + voice reminder + <prompt>..</prompt>          │
 │          if i==0: requires [[PROMPT_ID:0001]] after Ok!             │
+│  budget priority: summary > scenes > story context                  │
 └────────────────────────────────────────────────────────────────────┘
             │
             v

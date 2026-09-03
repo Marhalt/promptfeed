@@ -38,6 +38,9 @@ consistent_scenes = True
 max_context_tokens = 32000
 response_check = "Ok!"
 refusal_mode = True
+prompt_cache = True  # send cache_prompt to the LLM server so it reuses the KV cache
+                     # across scenes (big speedup once the context prefix is stable).
+                     # Disable with -nocache if the server produces stale/repetitive output.
 verbose = False
 
 open("logs.txt", "w").close()
@@ -425,7 +428,7 @@ def send_prompt_to_llm(message_history):
         "repetition_penalty": repetition_penalty,
         "frequency_penalty": 0.0,
         "presence_penalty": 0.0,
-        "cache_prompt": False,
+        "cache_prompt": prompt_cache,
     }
 
     headers = {"Content-Type": "application/json"}
@@ -466,7 +469,7 @@ def read_arguments():
 
     global number_citations, temperature, consistent_scenes, max_context_tokens, refusal_mode, verbose
     global filename, filename_passed, citations_arg, rewrite_idx, resultsfile_override
-    global LLM_REQUEST_TIMEOUT_SECONDS
+    global LLM_REQUEST_TIMEOUT_SECONDS, prompt_cache
 
     parser = argparse.ArgumentParser(description="Story continuation program with embeddings and scene consistency.")
 
@@ -525,6 +528,15 @@ def read_arguments():
 
     parser.add_argument("-nocontext", action="store_false", dest="consistent_scenes")
     parser.add_argument("-refusal", action="store_false", dest="refusal_mode")
+    parser.add_argument(
+        "-nocache",
+        action="store_false",
+        dest="prompt_cache",
+        help=(
+            "Disable prompt caching (cache_prompt) on the LLM server. On by default; "
+            "turn off only if the server returns stale or repetitive output between scenes."
+        ),
+    )
     parser.add_argument("-verbose", action="store_true")
     parser.add_argument("filename", nargs="?", help="Optional story filename")
 
@@ -535,6 +547,7 @@ def read_arguments():
     temperature = args.temp
     consistent_scenes = args.consistent_scenes
     refusal_mode = args.refusal_mode
+    prompt_cache = args.prompt_cache
     verbose = args.verbose
     rewrite_idx = args.rewrite
     resultsfile_override = args.resultsfile
@@ -573,6 +586,7 @@ def read_arguments():
     print(f"-citations arg value: {citations_arg}")
     print(f"Temperature: {temperature}")
     print(f"Refusal mode: {refusal_mode}")
+    print(f"Prompt cache: {prompt_cache}")
     print(f"Max context tokens: {max_context_tokens} ({source})")
     print(f"Consistent scenes: {consistent_scenes}")
     print(f"Verbose: {verbose}")
@@ -634,66 +648,87 @@ def build_message_history(
 
     fixed_system_text = (base_system_prompt or "").strip()
 
+    # --- user turn: task line, optional voice reminder, then the prompt itself last ---
+    task_line = (
+        "Only generate a scene based on the prompt below. "
+        "Do not continue any other thread unless it directly supports that prompt."
+    )
+
+    voice_reminder = ""
+    if voice.strip():
+        voice_reminder = "Write the scene in the voice defined in the <voice> section above"
+        if consistent_scenes and prompt_idx > 0:
+            voice_reminder += ", continuing directly from the most recent scene in <story_so_far>"
+        voice_reminder += ".\n\n"
+
+    prompt_block = f"<prompt>\n{prompts[prompt_idx].strip()}\n</prompt>"
+
     if prompt_idx == 0:
         user_text = (
             "Echo this tag exactly on the first line after Ok!: "
             f"[[PROMPT_ID: {FIRST_PROMPT_ID}]]\n\n"
-            "Only generate a scene based on the FINAL PROMPT below. "
-            "Do not continue any other thread unless it directly supports that final prompt.\n\n"
-            f"FINAL PROMPT:\n{prompts[prompt_idx].strip()}"
+            + task_line + "\n\n"
+            + voice_reminder
+            + prompt_block
         )
     else:
-        user_text = (
-            "Only generate a scene based on the FINAL PROMPT below. "
-            "Do not continue any other thread unless it directly supports that final prompt.\n\n"
-            f"FINAL PROMPT:\n{prompts[prompt_idx].strip()}"
-        )
+        user_text = task_line + "\n\n" + voice_reminder + prompt_block
 
     fixed_system_tokens = tok(fixed_system_text)
     user_tokens = tok(user_text)
     optional_budget = max(0, hard_limit - (fixed_system_tokens + user_tokens))
 
-    system_blocks_final = [fixed_system_text]
     optional_used = 0
+    summary_block = None
+    story_block = None
+    scenes_block = None
     summary_toks = 0
     scenes_toks = 0
     story_toks = 0
     scene_prompt_fallbacks = 0
 
-    # Optional: summary
+    # Priority 1: summary
     if summary_text and summary_text.strip():
-        block = "Summary:\n" + summary_text.strip()
+        block = "<summary>\n" + summary_text.strip() + "\n</summary>"
         t = tok(block)
         if optional_used + t <= optional_budget:
-            system_blocks_final.append(block)
+            summary_block = block
             optional_used += t
             summary_toks = t
 
-    # Optional: prior scenes (before story context — most recent narrative beats are highest value).
-    # Scenes that don't fit as full text fall back to their original guiding prompt (much cheaper)
+    # Priority 2: prior scenes. Kept ahead of story context in the BUDGET because the most
+    # recent narrative beats are the highest-value context; placed AFTER it in the final
+    # message (see assembly below) so the stable prefix can be reused by the server's KV
+    # cache. Scenes that don't fit as full text fall back to their original guiding prompt
     # rather than being dropped outright, so older scenes stay represented at reduced fidelity.
     if consistent_scenes and prompt_idx > 0:
         header = (
-            "Story so far (most recent first). Scenes are the actual final text and take "
-            "precedence; some older scenes did not fit in full and are shown instead as the "
-            "guiding prompt originally used to write them, marked as such below."
+            "<story_so_far>\n"
+            "Scenes so far, most recent first. These are the actual final text and take "
+            "precedence; some older scenes did not fit in full and appear instead as the "
+            "guiding prompt originally used to write them, marked as such."
         )
-        header_t = tok(header)
+        footer = "</story_so_far>"
+        frame_t = tok(header) + tok(footer)
 
-        if optional_used + header_t <= optional_budget:
+        if optional_used + frame_t <= optional_budget:
             tmp = [header]
-            tmp_used = header_t
+            tmp_used = frame_t
             for i in range(prompt_idx - 1, -1, -1):
                 prev_scene = (return_prompts[i] or "").strip()
                 if prev_scene:
-                    t = tok(prev_scene)
+                    block = f'<scene n="{i + 1}">\n{prev_scene}\n</scene>'
+                    t = tok(block)
                     if optional_used + tmp_used + t <= optional_budget:
-                        tmp.append(prev_scene)
+                        tmp.append(block)
                         tmp_used += t
                         continue
                 prev_prompt = (prompts[i] or "").strip()
                 if prev_prompt:
-                    block = f"[Scene {i + 1} — guiding prompt only, full text unavailable]\n{prev_prompt}"
+                    block = (
+                        f'<scene n="{i + 1}" note="guiding prompt only, full text unavailable">\n'
+                        f"{prev_prompt}\n</scene>"
+                    )
                     t = tok(block)
                     if optional_used + tmp_used + t <= optional_budget:
                         tmp.append(block)
@@ -702,41 +737,54 @@ def build_message_history(
                         continue
                 break
             if len(tmp) > 1:
-                system_blocks_final.append("\n\n".join(tmp))
+                tmp.append(footer)
+                scenes_block = "\n\n".join(tmp)
                 optional_used += tmp_used
                 scenes_toks = tmp_used
 
-    # Optional: story context
+    # Priority 3: story context
     if use_embeddings:
         relevant_chunks = get_relevant_chunks(prompts[prompt_idx], number_citations)
         if relevant_chunks:
-            header = "Relevant story context:"
-            header_t = tok(header)
-            if optional_used + header_t <= optional_budget:
-                system_blocks_final.append(header)
-                optional_used += header_t
-                story_toks += header_t
+            frame_t = tok("<retrieved_context>") + tok("</retrieved_context>")
+            if optional_used + frame_t <= optional_budget:
+                parts = ["<retrieved_context>"]
+                used = frame_t
                 for chunk in relevant_chunks:
                     chunk = (chunk or "").strip()
                     if not chunk:
                         continue
                     t = tok(chunk)
-                    if optional_used + t <= optional_budget:
-                        system_blocks_final.append(chunk)
-                        optional_used += t
-                        story_toks += t
+                    if optional_used + used + t <= optional_budget:
+                        parts.append(chunk)
+                        used += t
                     else:
                         break
+                if len(parts) > 1:
+                    parts.append("</retrieved_context>")
+                    story_block = "\n\n".join(parts)
+                    optional_used += used
+                    story_toks = used
     else:
         if story_file and story_chunks:
             full_story = (story_chunks[0] or "").strip()
             if full_story:
-                block = "Full story context:\n" + full_story
+                block = "<reference_story>\n" + full_story + "\n</reference_story>"
                 t = tok(block)
                 if optional_used + t <= optional_budget:
-                    system_blocks_final.append(block)
+                    story_block = block
                     optional_used += t
                     story_toks = t
+
+    # Assemble in physical order: stable content first (cache-friendly prefix),
+    # growing content (prior scenes) last, right before the user turn.
+    system_blocks_final = [fixed_system_text]
+    if summary_block:
+        system_blocks_final.append(summary_block)
+    if story_block:
+        system_blocks_final.append(story_block)
+    if scenes_block:
+        system_blocks_final.append(scenes_block)
 
     final_system_text = join_blocks(system_blocks_final)
     total_est = tok(final_system_text) + user_tokens
@@ -1069,11 +1117,13 @@ if __name__ == "__main__":
             print("Story file chunked and embeddings created.")
             print(f"Citations per prompt: {number_citations}")
 
+    # Order: directives (system) → voice → characters. Voice sits high so it frames
+    # everything below it; a short reminder is also appended to the user turn.
     system_parts = [system_prompt.strip()]
-    if characters.strip():
-        system_parts.append("Characters:\n" + characters.strip())
     if voice.strip():
-        system_parts.append("Voice:\n" + voice.strip())
+        system_parts.append("<voice>\n" + voice.strip() + "\n</voice>")
+    if characters.strip():
+        system_parts.append("<characters>\n" + characters.strip() + "\n</characters>")
     base_system_prompt = "\n\n".join(p for p in system_parts if p)
     summary_text = summary.strip() if summary else ""
     minimal_system_text = build_minimal_system_text()
