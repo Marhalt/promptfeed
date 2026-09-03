@@ -292,11 +292,31 @@ def resolve_block_file(block_text, base_dir):
     return block_text, None
 
 
+# Recognized &&block&& / "# heading" tags, mapping forgiving aliases (plural/
+# singular slips, abbreviations) onto the canonical name the parser uses.
+PROMPT_FILE_TAGS = {
+    "prompt": "prompt",
+    "prompts": "prompt",
+    "system": "system",
+    "characters": "characters",
+    "character": "characters",
+    "char": "characters",
+    "chars": "characters",
+    "voice": "voice",
+    "summary": "summary",
+    "file": "file",
+}
+
+
 def parse_prompts_from_file(filename):
     global prompts, system_prompt, characters, voice, voice_source_file, summary, story_file
 
     with open(filename, "r", encoding="utf-8") as f:
         lines = f.readlines()
+
+    # Drop whole-line comments: any line whose first non-whitespace characters are //.
+    # Lets you annotate the prompt file freely; inline (trailing) // is left alone.
+    lines = [ln for ln in lines if not ln.lstrip().startswith("//")]
 
     current_block = []
     current_tag = None
@@ -348,16 +368,12 @@ def parse_prompts_from_file(filename):
 
         if stripped.startswith("&&") and stripped.endswith("&&"):
             finalize_block()
-            tag = stripped.strip("&").lower()
-            if tag in ["prompt", "system", "characters", "voice", "summary", "file"]:
-                current_tag = tag
-            else:
-                current_tag = None
+            current_tag = PROMPT_FILE_TAGS.get(stripped.strip("&").strip().lower())
             continue
 
         if re.match(r"^#{1,6}\s*\w", stripped):
-            tag = re.sub(r"^#+\s*", "", stripped).lower()
-            if tag in ["prompt", "system", "characters", "voice", "summary", "file"]:
+            tag = PROMPT_FILE_TAGS.get(re.sub(r"^#+\s*", "", stripped).lower())
+            if tag:
                 finalize_block()
                 current_tag = tag
                 continue
